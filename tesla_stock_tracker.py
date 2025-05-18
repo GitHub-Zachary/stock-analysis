@@ -6,6 +6,10 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import io
+import base64
 
 def get_tesla_data():
     """
@@ -93,7 +97,8 @@ def get_tesla_data():
         "ma50": round(ma50, 2),
         "ma200": round(ma200, 2),
         "rsi": round(rsi, 2),  # 14日RSI
-        "pe_ratio": round(pe_ratio, 2)  # TTM市盈率
+        "pe_ratio": round(pe_ratio, 2),  # TTM市盈率
+        "df": df  # 添加完整的DataFrame用于绘图
     }
     
     return result
@@ -162,6 +167,76 @@ def analyze_buy_strategy(data):
     
     return result
 
+def create_price_chart(df, days=30):
+    """
+    创建过去30天的股价折线图，并返回Base64编码的图像
+    """
+    # 设置中文字体支持
+    plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+    plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+    
+    # 获取最近days天的数据
+    recent_data = df.iloc[-days:]
+    
+    # 创建图形
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # 绘制收盘价折线图
+    ax.plot(recent_data.index, recent_data['close'], 'b-', linewidth=2, label='收盘价')
+    
+    # 绘制50日均线
+    if 'ma50' in recent_data.columns:
+        ax.plot(recent_data.index, recent_data['ma50'], 'r--', linewidth=1.5, label='50日均线')
+    
+    # 绘制200日均线
+    if 'ma200' in recent_data.columns:
+        ax.plot(recent_data.index, recent_data['ma200'], 'g--', linewidth=1.5, label='200日均线')
+    
+    # 设置图表标题和标签
+    ax.set_title(f'特斯拉股票过去{days}天价格走势', fontsize=14)
+    ax.set_xlabel('日期', fontsize=12)
+    ax.set_ylabel('价格 (美元)', fontsize=12)
+    
+    # 设置x轴日期格式
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))  # 每5天显示一个日期
+    plt.xticks(rotation=45)
+    
+    # 添加网格线
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # 添加图例
+    ax.legend(loc='best')
+    
+    # 添加最新收盘价标注
+    latest_date = recent_data.index[-1]
+    latest_price = recent_data['close'].iloc[-1]
+    ax.annotate(f'${latest_price:.2f}', 
+                xy=(latest_date, latest_price),
+                xytext=(10, 0),
+                textcoords='offset points',
+                fontsize=12,
+                fontweight='bold',
+                color='blue')
+    
+    # 自动调整布局
+    plt.tight_layout()
+    
+    # 将图表转换为Base64编码的图像
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', dpi=100)
+    buffer.seek(0)
+    image_png = buffer.getvalue()
+    buffer.close()
+    
+    # 关闭图表，释放内存
+    plt.close(fig)
+    
+    # 转换为Base64字符串
+    image_base64 = base64.b64encode(image_png).decode('utf-8')
+    
+    return image_base64
+
 def send_email_report(stock_data, analysis_data):
     """发送分析报告到指定邮箱"""
     # 从环境变量获取邮箱配置
@@ -202,7 +277,10 @@ def send_email_report(stock_data, analysis_data):
     else:
         buy_signals_html = "无买入信号"
     
-    # 创建HTML邮件内容 - 优化格式并明确标注指标类型
+    # 创建过去30天的股价折线图
+    price_chart_base64 = create_price_chart(stock_data["df"])
+    
+    # 创建HTML邮件内容 - 优化格式并明确标注指标类型，去掉底部免责声明，添加图表
     html = f"""
     <html>
     <head>
@@ -227,16 +305,16 @@ def send_email_report(stock_data, analysis_data):
                 padding-bottom: 8px;
                 margin-top: 25px;
             }}
-            .footer {{ 
-                color: #777; 
-                font-size: 12px; 
-                margin-top: 30px;
-                border-top: 1px solid #eee;
-                padding-top: 10px;
-            }}
             .data-section {{ margin-bottom: 25px; }}
             ul {{ padding-left: 20px; }}
             li {{ margin-bottom: 5px; }}
+            .chart-container {{
+                margin: 20px 0;
+                padding: 10px;
+                background-color: #f9f9f9;
+                border-radius: 5px;
+                text-align: center;
+            }}
         </style>
     </head>
     <body>
@@ -252,6 +330,11 @@ def send_email_report(stock_data, analysis_data):
                 <tr><td>RSI值 (14日)</td><td>{stock_data["rsi"]}</td></tr>
                 <tr><td>市盈率(TTM)</td><td>{stock_data["pe_ratio"]}</td></tr>
             </table>
+            
+            <!-- 添加过去30天的股价图表 -->
+            <div class="chart-container">
+                <img src="data:image/png;base64,{price_chart_base64}" alt="特斯拉股票过去30天价格走势" style="max-width:100%;">
+            </div>
         </div>
         
         <div class="data-section">
@@ -267,10 +350,6 @@ def send_email_report(stock_data, analysis_data):
             <div style="margin-top: 20px; text-align: center;">
                 <p class="recommendation">{emoji} 买入建议: {analysis_data["recommendation"]}</p>
             </div>
-        </div>
-        
-        <div class="footer">
-            <p>此邮件由自动系统生成，请勿回复。</p>
         </div>
     </body>
     </html>
@@ -307,12 +386,12 @@ def main():
         # 1. 获取特斯拉股票数据
         print("开始获取特斯拉股票数据...")
         tesla_data = get_tesla_data()
-        print(f"获取数据成功: {tesla_data}")
+        print(f"获取数据成功: {tesla_data['date']}, 价格: ${tesla_data['current_price']}")
         
         # 2. 分析买入策略
         print("开始分析买入策略...")
         analysis_result = analyze_buy_strategy(tesla_data)
-        print(f"分析完成: {analysis_result}")
+        print(f"分析完成: {analysis_result['recommendation']}, 信号数量: {analysis_result['signals_count']}")
         
         # 3. 发送电子邮件报告
         print("开始发送电子邮件报告...")
@@ -321,7 +400,7 @@ def main():
         
         return {
             "status": "success",
-            "stock_data": tesla_data,
+            "stock_data": {k: v for k, v in tesla_data.items() if k != 'df'},  # 排除DataFrame以便打印
             "analysis_result": analysis_result,
             "email_result": email_result
         }
