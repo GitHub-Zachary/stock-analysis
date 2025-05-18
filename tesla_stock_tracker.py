@@ -11,6 +11,44 @@ import matplotlib.dates as mdates
 import io
 import base64
 
+# 异常价格检测函数
+def detect_price_anomalies(df, threshold=0.15):
+    """
+    检测历史数据中异常价格变动
+    
+    参数:
+    df (DataFrame): 包含至少'close'列的股票价格数据框架
+    threshold (float): 触发异常检测的价格变动百分比阈值(默认15%)
+    
+    返回:
+    dict: 包含检测结果的字典
+    """
+    # 确保数据按日期排序
+    df = df.sort_index()
+    
+    # 计算每日价格变动百分比
+    df['price_change_pct'] = df['close'].pct_change() * 100
+    
+    # 检查是否有任何一天价格变动超过阈值(正负)
+    large_changes = df[abs(df['price_change_pct']) > threshold * 100]
+    
+    result = {
+        "detected": False,
+        "date": None,
+        "change_pct": None
+    }
+    
+    if not large_changes.empty:
+        # 找出最大变动的日期
+        max_change_idx = large_changes['price_change_pct'].abs().idxmax()
+        change_pct = large_changes.loc[max_change_idx, 'price_change_pct']
+        
+        result["detected"] = True
+        result["date"] = max_change_idx.strftime("%Y-%m-%d")
+        result["change_pct"] = round(change_pct, 2)
+    
+    return result
+
 def get_tesla_data():
     """
     使用Alpha Vantage API获取特斯拉股票的相关数据
@@ -88,6 +126,9 @@ def get_tesla_data():
     # 获取市盈率
     pe_ratio = float(data_overview.get("PERatio", 0))
     
+    # 检测52周内是否有价格异常变动
+    price_anomaly = detect_price_anomalies(df_52_weeks)
+    
     # 构建结果数据字典，包含TTM市盈率和14日RSI
     result = {
         "date": latest_date.strftime("%Y-%m-%d"),
@@ -98,6 +139,7 @@ def get_tesla_data():
         "ma200": round(ma200, 2),
         "rsi": round(rsi, 2),  # 14日RSI
         "pe_ratio": round(pe_ratio, 2),  # TTM市盈率
+        "price_anomaly": price_anomaly,  # 价格异常检测结果
         "df": df  # 添加完整的DataFrame用于绘图
     }
     
@@ -273,10 +315,20 @@ def send_email_report(stock_data, analysis_data):
     else:
         buy_signals_html = "无买入信号"
     
+    # 创建价格异常提示（如有）
+    anomaly_note = ""
+    if stock_data.get("price_anomaly", {}).get("detected", False):
+        anomaly = stock_data["price_anomaly"]
+        # 根据价格变动方向提供不同提示
+        if anomaly["change_pct"] < 0:
+            anomaly_note = f""" <span style="font-size:11px;color:#666;">(注意: 在{anomaly["date"]}检测到价格下跌{abs(anomaly["change_pct"])}%，可能是股票拆分)</span>"""
+        else:
+            anomaly_note = f""" <span style="font-size:11px;color:#666;">(注意: 在{anomaly["date"]}检测到价格上涨{anomaly["change_pct"]}%，可能是股票合并或其他重大事件)</span>"""
+    
     # 创建过去30天的股价折线图
     price_chart_base64 = create_price_chart(stock_data["df"])
     
-    # 创建HTML邮件内容 - 优化格式并明确标注指标类型，去掉底部免责声明，添加图表
+    # 创建HTML邮件内容 - 优化格式并明确标注指标类型
     html = f"""
     <html>
     <head>
@@ -319,7 +371,7 @@ def send_email_report(stock_data, analysis_data):
             <table>
                 <tr><th>指标</th><th>数值</th></tr>
                 <tr><td>当前股价</td><td>${stock_data["current_price"]}</td></tr>
-                <tr><td>52周最高价</td><td>${stock_data["high_52_week"]}</td></tr>
+                <tr><td>52周最高价</td><td>${stock_data["high_52_week"]}{anomaly_note}</td></tr>
                 <tr><td>52周最低价</td><td>${stock_data["low_52_week"]}</td></tr>
                 <tr><td>200日均线</td><td>${stock_data["ma200"]}</td></tr>
                 <tr><td>50日均线</td><td>${stock_data["ma50"]}</td></tr>
@@ -383,6 +435,11 @@ def main():
         print("开始获取特斯拉股票数据...")
         tesla_data = get_tesla_data()
         print(f"获取数据成功: {tesla_data['date']}, 价格: ${tesla_data['current_price']}")
+        
+        # 如果检测到价格异常，打印详细信息
+        if tesla_data.get("price_anomaly", {}).get("detected", False):
+            anomaly = tesla_data["price_anomaly"]
+            print(f"检测到价格异常: 在{anomaly['date']}价格变动{anomaly['change_pct']}%")
         
         # 2. 分析买入策略
         print("开始分析买入策略...")
