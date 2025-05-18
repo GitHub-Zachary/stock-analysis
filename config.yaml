@@ -1,0 +1,27 @@
+# Alpha Vantage API配置
+api_key: ""  # 留空使用环境变量 ALPHA_VANTAGE_API_KEY
+
+# 股票配置
+symbols:
+  - TSLA
+  - AAPL
+  - NVDA
+
+# 股票中文名称映射
+symbol_names:
+  TSLA: "特斯拉"
+  AAPL: "苹果"
+  NVDA: "英伟达"
+
+# 策略参数
+strategy:
+  rsi_threshold: 30              # RSI超卖阈值
+  price_position_threshold: 33   # 价格位置阈值(%)
+  ma_proximity_threshold: 0.05   # 均线附近阈值(5%)
+  anomaly_threshold: 0.15        # 异常价格变动阈值(15%)
+
+# 邮件配置
+email:
+  from: ""     # 留空使用环境变量 EMAIL_FROM
+  password: "" # 留空使用环境变量 EMAIL_PASSWORD
+  to: ""       # 留空使用环境变量 EMAIL_TO
