@@ -84,7 +84,7 @@ def get_tesla_data():
     # 获取市盈率
     pe_ratio = float(data_overview.get("PERatio", 0))
     
-    # 构建结果数据字典
+    # 构建结果数据字典，包含TTM市盈率和14日RSI
     result = {
         "date": latest_date.strftime("%Y-%m-%d"),
         "current_price": round(current_price, 2),
@@ -92,8 +92,8 @@ def get_tesla_data():
         "low_52_week": round(low_52_week, 2),
         "ma50": round(ma50, 2),
         "ma200": round(ma200, 2),
-        "rsi": round(rsi, 2),
-        "pe_ratio": round(pe_ratio, 2)
+        "rsi": round(rsi, 2),  # 14日RSI
+        "pe_ratio": round(pe_ratio, 2)  # TTM市盈率
     }
     
     return result
@@ -192,45 +192,86 @@ def send_email_report(stock_data, analysis_data):
         signal_color = "red"
         emoji = "🔴"
     
-    # 创建HTML邮件内容
+    # 格式化买入信号显示
+    buy_signals_html = ""
+    if analysis_data["buy_signals"]:
+        buy_signals_html = "<ul style='margin: 5px 0;'>"
+        for signal in analysis_data["buy_signals"]:
+            buy_signals_html += f"<li>{signal}</li>"
+        buy_signals_html += "</ul>"
+    else:
+        buy_signals_html = "无买入信号"
+    
+    # 创建HTML邮件内容 - 优化格式并明确标注指标类型
     html = f"""
     <html>
     <head>
         <style>
-            body {{ font-family: Arial, sans-serif; }}
-            table {{ border-collapse: collapse; width: 100%; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-            th {{ background-color: #f2f2f2; }}
-            .recommendation {{ font-weight: bold; color: {signal_color}; }}
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+            table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+            th, td {{ border: 1px solid #ddd; padding: 10px; text-align: left; }}
+            th {{ background-color: #f2f2f2; font-weight: bold; }}
+            .recommendation {{ 
+                font-weight: bold; 
+                color: {signal_color}; 
+                font-size: 18px; 
+                padding: 15px;
+                background-color: #f9f9f9;
+                border-radius: 5px;
+                display: inline-block;
+                margin-top: 15px;
+            }}
+            h3 {{ 
+                color: #333; 
+                border-bottom: 1px solid #ddd; 
+                padding-bottom: 8px;
+                margin-top: 25px;
+            }}
+            .footer {{ 
+                color: #777; 
+                font-size: 12px; 
+                margin-top: 30px;
+                border-top: 1px solid #eee;
+                padding-top: 10px;
+            }}
+            .data-section {{ margin-bottom: 25px; }}
+            ul {{ padding-left: 20px; }}
+            li {{ margin-bottom: 5px; }}
         </style>
     </head>
     <body>
-        <h2>特斯拉股票分析 - {today}</h2>
+        <div class="data-section">
+            <h3>当前数据</h3>
+            <table>
+                <tr><th>指标</th><th>数值</th></tr>
+                <tr><td>当前股价</td><td>${stock_data["current_price"]}</td></tr>
+                <tr><td>52周最高价</td><td>${stock_data["high_52_week"]}</td></tr>
+                <tr><td>52周最低价</td><td>${stock_data["low_52_week"]}</td></tr>
+                <tr><td>200日均线</td><td>${stock_data["ma200"]}</td></tr>
+                <tr><td>50日均线</td><td>${stock_data["ma50"]}</td></tr>
+                <tr><td>RSI值 (14日)</td><td>{stock_data["rsi"]}</td></tr>
+                <tr><td>市盈率(TTM)</td><td>{stock_data["pe_ratio"]}</td></tr>
+            </table>
+        </div>
         
-        <h3>当前数据</h3>
-        <table>
-            <tr><th>指标</th><th>数值</th></tr>
-            <tr><td>当前股价</td><td>${stock_data["current_price"]}</td></tr>
-            <tr><td>52周最高价</td><td>${stock_data["high_52_week"]}</td></tr>
-            <tr><td>52周最低价</td><td>${stock_data["low_52_week"]}</td></tr>
-            <tr><td>200日均线</td><td>${stock_data["ma200"]}</td></tr>
-            <tr><td>50日均线</td><td>${stock_data["ma50"]}</td></tr>
-            <tr><td>RSI值</td><td>{stock_data["rsi"]}</td></tr>
-            <tr><td>市盈率(P/E)</td><td>{stock_data["pe_ratio"]}</td></tr>
-        </table>
+        <div class="data-section">
+            <h3>买入策略分析</h3>
+            <table>
+                <tr><th>指标</th><th>数值</th></tr>
+                <tr><td>买入信号</td><td>{buy_signals_html}</td></tr>
+                <tr><td>信号数量</td><td>{analysis_data["signals_count"]}</td></tr>
+                <tr><td>市场位置</td><td>{analysis_data["market_position"]}</td></tr>
+                <tr><td>价格位置</td><td>{analysis_data["price_position_percentage"]}%</td></tr>
+            </table>
+            
+            <div style="margin-top: 20px; text-align: center;">
+                <p class="recommendation">{emoji} 买入建议: {analysis_data["recommendation"]}</p>
+            </div>
+        </div>
         
-        <h3>买入策略分析</h3>
-        <table>
-            <tr><th>指标</th><th>数值</th></tr>
-            <tr><td>买入信号</td><td>{", ".join(analysis_data["buy_signals"]) if analysis_data["buy_signals"] else "无买入信号"}</td></tr>
-            <tr><td>信号数量</td><td>{analysis_data["signals_count"]}</td></tr>
-            <tr><td>市场位置</td><td>{analysis_data["market_position"]}</td></tr>
-            <tr><td>价格位置</td><td>{analysis_data["price_position_percentage"]}%</td></tr>
-        </table>
-        
-        <p class="recommendation">{emoji} 买入建议: {analysis_data["recommendation"]}</p>
-        
-        <p><small>此邮件由自动系统生成，请勿回复。</small></p>
+        <div class="footer">
+            <p>此邮件由自动系统生成，请勿回复。</p>
+        </div>
     </body>
     </html>
     """
