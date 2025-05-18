@@ -2,7 +2,12 @@ import requests
 import pandas as pd
 import numpy as np
 import os
+import pickle
 import smtplib
+import logging
+import argparse
+import yaml
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
@@ -11,7 +16,60 @@ import matplotlib.dates as mdates
 import io
 import base64
 
-# 异常价格检测函数
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(f"stock_tracker_{datetime.now().strftime('%Y%m%d')}.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def load_config(config_file="config.yaml"):
+    """加载配置文件"""
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            logger.info(f"成功加载配置文件: {config_file}")
+            return config
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {str(e)}")
+        # 返回默认配置
+        return {
+            "symbols": ["TSLA", "AAPL", "NVDA"],
+            "symbol_names": {"TSLA": "特斯拉", "AAPL": "苹果", "NVDA": "英伟达"},
+            "strategy": {
+                "rsi_threshold": 30,
+                "price_position_threshold": 33,
+                "ma_proximity_threshold": 0.05,
+                "anomaly_threshold": 0.15
+            }
+        }
+
+def get_api_data(url, max_retries=3, retry_delay=10):
+    """带重试机制的API请求函数"""
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url)
+            data = response.json()
+            
+            # 检查是否返回了有效内容
+            if "Note" in data and "API call frequency" in data["Note"]:
+                logger.warning(f"API频率限制触发：{data['Note']}")
+                time.sleep(retry_delay * (attempt + 1))  # 指数退避
+                continue
+                
+            return data
+        except Exception as e:
+            logger.error(f"API请求失败 (尝试 {attempt+1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                raise
+
 def detect_price_anomalies(df, threshold=0.15):
     """
     检测历史数据中异常价格变动
@@ -49,40 +107,63 @@ def detect_price_anomalies(df, threshold=0.15):
     
     return result
 
-def get_tesla_data():
+def get_stock_data_with_cache(symbol, api_key, cache_dir="cache", cache_expiry_hours=4):
+    """获取股票数据，支持本地缓存"""
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{symbol}_data.pkl")
+    
+    # 检查缓存是否存在且有效
+    if os.path.exists(cache_file):
+        file_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+        if datetime.now() - file_time < timedelta(hours=cache_expiry_hours):
+            try:
+                with open(cache_file, 'rb') as f:
+                    logger.info(f"使用缓存数据: {symbol}")
+                    return pickle.load(f)
+            except Exception as e:
+                logger.warning(f"读取缓存失败: {str(e)}")
+    
+    # 获取新数据
+    data = get_stock_data(symbol, api_key)
+    
+    # 保存到缓存
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(data, f)
+    except Exception as e:
+        logger.warning(f"保存缓存失败: {str(e)}")
+    
+    return data
+
+def get_stock_data(symbol, api_key):
     """
-    使用Alpha Vantage API获取特斯拉股票的相关数据
+    使用Alpha Vantage API获取股票的相关数据
     """
-    # 从环境变量获取API密钥
-    api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
-    symbol = "TSLA"  # 特斯拉股票代码
+    logger.info(f"开始获取{symbol}股票数据...")
     
     # 获取股票日线数据
     url_daily = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=full&apikey={api_key}"
-    response_daily = requests.get(url_daily)
-    data_daily = response_daily.json()
+    data_daily = get_api_data(url_daily)
     
     # 打印API响应的键，用于调试
-    print(f"API Response Keys: {data_daily.keys()}")
+    logger.debug(f"API Response Keys: {data_daily.keys()}")
     
     # 等待一下，避免API请求过快
-    import time
     time.sleep(1)
     
     # 获取公司概览数据（包含市盈率）
     url_overview = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={api_key}"
-    response_overview = requests.get(url_overview)
-    data_overview = response_overview.json()
+    data_overview = get_api_data(url_overview)
     
     # 打印概览数据的键，用于调试
-    print(f"Overview Response Keys: {data_overview.keys()}")
+    logger.debug(f"Overview Response Keys: {data_overview.keys()}")
     
     # 将日线数据转换为DataFrame
     time_series = data_daily.get("Time Series (Daily)", {})
     if not time_series:
-        print("Error: No time series data returned from API")
-        print(f"Full API response: {data_daily}")
-        raise ValueError("Failed to get time series data from Alpha Vantage")
+        logger.error("Error: No time series data returned from API")
+        logger.error(f"Full API response: {data_daily}")
+        raise ValueError(f"Failed to get time series data from Alpha Vantage for {symbol}")
         
     df = pd.DataFrame(time_series).T
     df.index = pd.to_datetime(df.index)
@@ -95,20 +176,8 @@ def get_tesla_data():
     # 重命名列
     df.columns = ['open', 'high', 'low', 'close', 'volume']
     
-    # 计算50日和200日移动平均线
-    df['ma50'] = df['close'].rolling(window=50).mean()
-    df['ma200'] = df['close'].rolling(window=200).mean()
-    
-    # 计算14日RSI
-    delta = df['close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
-    
-    rs = avg_gain / avg_loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+    # 计算技术指标
+    df = calculate_technical_indicators(df)
     
     # 获取当前数据
     latest_date = df.index[-1]
@@ -143,13 +212,53 @@ def get_tesla_data():
         "df": df  # 添加完整的DataFrame用于绘图
     }
     
+    logger.info(f"成功获取{symbol}股票数据，最新日期: {result['date']}")
     return result
 
-def analyze_buy_strategy(data):
+def calculate_technical_indicators(df):
+    """计算各种技术指标"""
+    # 计算50日和200日移动平均线
+    df['ma50'] = df['close'].rolling(window=50).mean()
+    df['ma200'] = df['close'].rolling(window=200).mean()
+    
+    # 计算14日RSI
+    delta = df['close'].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    
+    rs = avg_gain / avg_loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    
+    # 添加MACD指标
+    exp12 = df['close'].ewm(span=12, adjust=False).mean()
+    exp26 = df['close'].ewm(span=26, adjust=False).mean()
+    df['macd'] = exp12 - exp26
+    df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+    df['macd_hist'] = df['macd'] - df['signal']
+    
+    # 添加布林带
+    df['ma20'] = df['close'].rolling(window=20).mean()
+    std20 = df['close'].rolling(window=20).std()
+    df['upper_band'] = df['ma20'] + (std20 * 2)
+    df['lower_band'] = df['ma20'] - (std20 * 2)
+    
+    return df
+
+def analyze_buy_strategy(data, strategy_params=None):
     """
-    根据特斯拉股票的数据分析是否适合买入
+    根据股票的数据分析是否适合买入
     返回买入策略分析结果
     """
+    if strategy_params is None:
+        strategy_params = {
+            "rsi_threshold": 30,
+            "price_position_threshold": 33,
+            "ma_proximity_threshold": 0.05
+        }
+    
     current_price = data["current_price"]
     high_52_week = data["high_52_week"]
     low_52_week = data["low_52_week"]
@@ -164,20 +273,23 @@ def analyze_buy_strategy(data):
     # 初始化买入信号
     buy_signals = []
     
-    # 策略1: RSI < 30 表示超卖，可能是买入机会
-    if rsi < 30:
-        buy_signals.append("RSI低于30，处于超卖区域")
+    # 策略1: RSI < threshold 表示超卖，可能是买入机会
+    rsi_threshold = strategy_params.get("rsi_threshold", 30)
+    if rsi < rsi_threshold:
+        buy_signals.append(f"RSI低于{rsi_threshold}，处于超卖区域")
     
     # 策略2: 价格低于50日均线但高于200日均线，可能是技术回调
     if current_price < ma50 and current_price > ma200:
         buy_signals.append("价格低于50日均线但高于200日均线，可能是技术回调")
     
     # 策略3: 价格在52周范围的下1/3位置
-    if price_position < 33:
-        buy_signals.append(f"价格在52周范围的下1/3位置 ({price_position:.2f}%)")
+    price_position_threshold = strategy_params.get("price_position_threshold", 33)
+    if price_position < price_position_threshold:
+        buy_signals.append(f"价格在52周范围的下{price_position_threshold}%位置 ({price_position:.2f}%)")
     
     # 策略4: 50日均线在200日均线之上（黄金交叉后的走势）且价格在50日均线附近
-    if ma50 > ma200 and abs(current_price - ma50) / ma50 < 0.05:
+    ma_proximity_threshold = strategy_params.get("ma_proximity_threshold", 0.05)
+    if ma50 > ma200 and abs(current_price - ma50) / ma50 < ma_proximity_threshold:
         buy_signals.append("均线呈现黄金交叉形态，且价格在50日均线附近")
     
     # 买入建议
@@ -207,9 +319,10 @@ def analyze_buy_strategy(data):
         "price_position_percentage": round(price_position, 2)
     }
     
+    logger.info(f"分析完成: {result['recommendation']}, 信号数量: {result['signals_count']}")
     return result
 
-def create_price_chart(df, days=30):
+def create_price_chart(df, symbol_name, days=30):
     """
     创建过去30天的股价折线图，并返回Base64编码的图像
     """
@@ -231,7 +344,7 @@ def create_price_chart(df, days=30):
         ax.plot(recent_data.index, recent_data['ma200'], 'g--', linewidth=1.5, label='200-Day MA')
     
     # 设置图表标题和标签
-    ax.set_title(f'Tesla Stock Price - Last {days} Days', fontsize=14)
+    ax.set_title(f'{symbol_name} Stock Price - Last {days} Days', fontsize=14)
     ax.set_xlabel('Date', fontsize=12)
     ax.set_ylabel('Price (USD)', fontsize=12)
     
@@ -275,15 +388,19 @@ def create_price_chart(df, days=30):
     
     return image_base64
 
-def send_email_report(stock_data, analysis_data):
+def send_email_report(stock_data, analysis_data, email_config, symbol_name):
     """发送分析报告到指定邮箱"""
-    # 从环境变量获取邮箱配置
-    sender_email = os.environ.get("EMAIL_FROM")
-    sender_password = os.environ.get("EMAIL_PASSWORD")
-    receiver_email = os.environ.get("EMAIL_TO")
+    # 从环境变量或配置获取邮箱配置
+    sender_email = email_config.get("from") or os.environ.get("EMAIL_FROM")
+    sender_password = email_config.get("password") or os.environ.get("EMAIL_PASSWORD")
+    receiver_email = email_config.get("to") or os.environ.get("EMAIL_TO")
+    
+    if not sender_email or not sender_password or not receiver_email:
+        logger.error("邮箱配置缺失，无法发送邮件")
+        return {"status": "error", "message": "邮箱配置缺失"}
     
     # 打印邮箱配置（不包含密码）
-    print(f"Sending email from {sender_email} to {receiver_email}")
+    logger.info(f"准备发送邮件从 {sender_email} 到 {receiver_email}")
     
     # 创建今天的日期字符串
     today = datetime.now().strftime("%Y-%m-%d")
@@ -292,7 +409,7 @@ def send_email_report(stock_data, analysis_data):
     msg = MIMEMultipart()
     msg['From'] = sender_email
     msg['To'] = receiver_email
-    msg['Subject'] = f"特斯拉股票分析 - {today}"
+    msg['Subject'] = f"{symbol_name}股票分析 - {today}"
     
     # 设置信号颜色和状态表情
     if analysis_data["recommendation"] == "可以考虑买入":
@@ -326,9 +443,9 @@ def send_email_report(stock_data, analysis_data):
             anomaly_note = f""" <span style="font-size:11px;color:#666;">(注意: 在{anomaly["date"]}检测到价格上涨{anomaly["change_pct"]}%，可能是股票合并或其他重大事件)</span>"""
     
     # 创建过去30天的股价折线图
-    price_chart_base64 = create_price_chart(stock_data["df"])
+    price_chart_base64 = create_price_chart(stock_data["df"], symbol_name)
     
-    # 创建HTML邮件内容 - 优化格式并明确标注指标类型
+    # 创建HTML邮件内容
     html = f"""
     <html>
     <head>
@@ -381,7 +498,7 @@ def send_email_report(stock_data, analysis_data):
             
             <!-- 添加过去30天的股价图表 -->
             <div class="chart-container">
-                <img src="data:image/png;base64,{price_chart_base64}" alt="特斯拉股票过去30天价格走势" style="max-width:100%;">
+                <img src="data:image/png;base64,{price_chart_base64}" alt="{symbol_name}股票过去30天价格走势" style="max-width:100%;">
             </div>
         </div>
         
@@ -423,91 +540,174 @@ def send_email_report(stock_data, analysis_data):
         text = msg.as_string()
         server.sendmail(sender_email, receiver_email, text)
         server.quit()
-        print(f"邮件已成功发送到 {receiver_email}")
+        logger.info(f"邮件已成功发送到 {receiver_email}")
         return {"status": "success", "message": f"邮件已发送到 {receiver_email}"}
     except Exception as e:
-        print(f"发送邮件失败: {str(e)}")
+        logger.error(f"发送邮件失败: {str(e)}")
         return {"status": "error", "message": f"发送邮件失败: {str(e)}"}
 
-def main():
+def send_error_email(symbol, error, email_config):
+    """发送错误报告邮件"""
+    sender_email = email_config.get("from") or os.environ.get("EMAIL_FROM")
+    sender_password = email_config.get("password") or os.environ.get("EMAIL_PASSWORD")
+    receiver_email = email_config.get("to") or os.environ.get("EMAIL_TO")
+    
+    if not sender_email or not sender_password or not receiver_email:
+        logger.error("邮箱配置缺失，无法发送错误邮件")
+        return {"status": "error", "message": "邮箱配置缺失"}
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg['Subject'] = f"{symbol}股票分析 - 错误报告 - {datetime.now().strftime('%Y-%m-%d')}"
+    
+    error_content = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; }}
+            .error {{ color: red; font-weight: bold; }}
+        </style>
+    </head>
+    <body>
+        <h2>{symbol}股票分析 - 错误报告</h2>
+        <p class="error">执行脚本时发生错误:</p>
+        <p>{str(error)}</p>
+    </body>
+    </html>
+    """
+    
+    msg.attach(MIMEText(error_content, 'html'))
+    
     try:
-        # 1. 获取特斯拉股票数据
-        print("开始获取特斯拉股票数据...")
-        tesla_data = get_tesla_data()
-        print(f"获取数据成功: {tesla_data['date']}, 价格: ${tesla_data['current_price']}")
-        
-        # 如果检测到价格异常，打印详细信息
-        if tesla_data.get("price_anomaly", {}).get("detected", False):
-            anomaly = tesla_data["price_anomaly"]
-            print(f"检测到价格异常: 在{anomaly['date']}价格变动{anomaly['change_pct']}%")
-        
-        # 2. 分析买入策略
-        print("开始分析买入策略...")
-        analysis_result = analyze_buy_strategy(tesla_data)
-        print(f"分析完成: {analysis_result['recommendation']}, 信号数量: {analysis_result['signals_count']}")
-        
-        # 3. 发送电子邮件报告
-        print("开始发送电子邮件报告...")
-        email_result = send_email_report(tesla_data, analysis_result)
-        print(email_result["message"])
-        
-        return {
-            "status": "success",
-            "stock_data": {k: v for k, v in tesla_data.items() if k != 'df'},  # 排除DataFrame以便打印
-            "analysis_result": analysis_result,
-            "email_result": email_result
-        }
-    except Exception as e:
-        print(f"执行过程中发生错误: {str(e)}")
-        # 如果发生错误，尝试发送错误报告邮件
+        if sender_email.endswith("gmail.com"):
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+        elif sender_email.endswith("outlook.com"):
+            server = smtplib.SMTP('smtp.office365.com', 587)
+        else:
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, receiver_email, msg.as_string())
+        server.quit()
+        logger.info("错误报告邮件已发送")
+        return {"status": "success", "message": "错误报告邮件已发送"}
+    except Exception as email_error:
+        logger.error(f"发送错误报告邮件失败: {str(email_error)}")
+        return {"status": "error", "message": f"发送错误报告邮件失败: {str(email_error)}"}
+
+def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='股票分析工具')
+    parser.add_argument('--config', type=str, default='config.yaml', help='配置文件路径')
+    parser.add_argument('--symbol', type=str, help='分析特定股票代码，例如：TSLA')
+    parser.add_argument('--symbols', type=str, help='分析多只股票，逗号分隔，例如：TSLA,AAPL,NVDA')
+    parser.add_argument('--no-email', action='store_true', help='不发送邮件，仅进行分析')
+    parser.add_argument('--cache-expiry', type=int, default=4, help='缓存过期时间(小时)')
+    args = parser.parse_args()
+    
+    # 加载配置
+    config = load_config(args.config)
+    
+    # 确定要分析的股票列表
+    symbols_to_analyze = []
+    if args.symbol:
+        symbols_to_analyze = [args.symbol]
+    elif args.symbols:
+        symbols_to_analyze = [s.strip() for s in args.symbols.split(',')]
+    else:
+        # 使用配置文件中的股票列表
+        symbols_to_analyze = config.get('symbols', ["TSLA", "AAPL", "NVDA"])
+    
+    # 从环境变量或配置获取API密钥
+    api_key = config.get('api_key') or os.environ.get("ALPHA_VANTAGE_API_KEY")
+    if not api_key:
+        logger.error("缺少Alpha Vantage API密钥，请在配置文件设置或通过环境变量ALPHA_VANTAGE_API_KEY提供")
+        return {"status": "error", "error": "缺少API密钥"}
+    
+    # 处理每只股票
+    results = []
+    for symbol in symbols_to_analyze:
         try:
-            sender_email = os.environ.get("EMAIL_FROM")
-            sender_password = os.environ.get("EMAIL_PASSWORD")
-            receiver_email = os.environ.get("EMAIL_TO")
+            symbol_name = config.get('symbol_names', {}).get(symbol, symbol)
+            logger.info(f"开始处理 {symbol} ({symbol_name})...")
             
-            msg = MIMEMultipart()
-            msg['From'] = sender_email
-            msg['To'] = receiver_email
-            msg['Subject'] = f"特斯拉股票分析 - 错误报告 - {datetime.now().strftime('%Y-%m-%d')}"
+            # 获取股票数据
+            stock_data = get_stock_data_with_cache(
+                symbol, 
+                api_key, 
+                cache_expiry_hours=args.cache_expiry
+            )
             
-            error_content = f"""
-            <html>
-            <head>
-                <style>
-                    body {{ font-family: Arial, sans-serif; }}
-                    .error {{ color: red; font-weight: bold; }}
-                </style>
-            </head>
-            <body>
-                <h2>特斯拉股票分析 - 错误报告</h2>
-                <p class="error">执行脚本时发生错误:</p>
-                <p>{str(e)}</p>
-            </body>
-            </html>
-            """
+            # 分析买入策略
+            strategy_params = config.get('strategy', {})
+            analysis_result = analyze_buy_strategy(stock_data, strategy_params)
             
-            msg.attach(MIMEText(error_content, 'html'))
+            # 是否发送邮件
+            email_result = None
+            if not args.no_email:
+                email_config = config.get('email', {})
+                email_result = send_email_report(
+                    stock_data, 
+                    analysis_result, 
+                    email_config, 
+                    symbol_name
+                )
             
-            if sender_email.endswith("gmail.com"):
-                server = smtplib.SMTP('smtp.gmail.com', 587)
-            elif sender_email.endswith("outlook.com"):
-                server = smtplib.SMTP('smtp.office365.com', 587)
-            else:
-                server = smtplib.SMTP('smtp.gmail.com', 587)
+            # 将结果添加到列表
+            result = {
+                "symbol": symbol,
+                "symbol_name": symbol_name,
+                "status": "success",
+                "analysis": analysis_result
+            }
+            
+            if email_result:
+                result["email"] = email_result
                 
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
-            server.quit()
-            print("错误报告邮件已发送")
-        except Exception as email_error:
-            print(f"发送错误报告邮件失败: {str(email_error)}")
-        
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+            results.append(result)
+            logger.info(f"{symbol} 处理完成")
+            
+        except Exception as e:
+            logger.error(f"{symbol} 处理失败: {str(e)}", exc_info=True)
+            # 发送错误报告邮件
+            if not args.no_email:
+                email_config = config.get('email', {})
+                send_error_email(symbol, str(e), email_config)
+            
+            results.append({
+                "symbol": symbol,
+                "status": "error",
+                "error": str(e)
+            })
+    
+    # 汇总报告
+    success_count = sum(1 for r in results if r["status"] == "success")
+    error_count = len(results) - success_count
+    
+    logger.info(f"全部处理完成。成功: {success_count}, 失败: {error_count}")
+    for r in results:
+        if r["status"] == "success":
+            symbol = r["symbol"]
+            recommendation = r["analysis"]["recommendation"]
+            signals = r["analysis"]["signals_count"]
+            logger.info(f"  {symbol}: {recommendation} (信号数: {signals})")
+        else:
+            logger.info(f"  {r['symbol']}: 失败 - {r.get('error', '未知错误')}")
+    
+    return {
+        "status": "success" if error_count == 0 else "partial_success" if success_count > 0 else "error",
+        "success_count": success_count,
+        "error_count": error_count,
+        "results": results
+    }
 
 if __name__ == "__main__":
-    result = main()
-    print(f"执行结果: {result['status']}")
+    try:
+        result = main()
+        exit_code = 0 if result["status"] in ["success", "partial_success"] else 1
+        exit(exit_code)
+    except Exception as e:
+        logger.error(f"程序执行过程中发生未处理的异常: {str(e)}", exc_info=True)
+        exit(1)
