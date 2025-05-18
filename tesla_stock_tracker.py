@@ -211,84 +211,58 @@ def analyze_buy_strategy(data):
 
 def create_price_chart(df, days=30):
     """
-    创建过去30天的股价折线图，使用专业金融配色方案并优化移动设备显示
+    创建过去30天的股价折线图，并返回Base64编码的图像
     """
     # 获取最近days天的数据
     recent_data = df.iloc[-days:]
     
-    # 重置matplotlib样式，确保一致性
-    plt.rcParams.update(plt.rcParamsDefault)
+    # 创建图形
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # 创建图形 - 使用更适合移动显示的比例
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=120, facecolor='white')
-    ax.set_facecolor('#F8F9FA')  # 浅灰背景，提高对比度
+    # 绘制收盘价折线图
+    ax.plot(recent_data.index, recent_data['close'], 'b-', linewidth=2, label='Close Price')
     
-    # 设置紧凑的边距
-    plt.subplots_adjust(left=0.10, right=0.95, top=0.90, bottom=0.15)
-    
-    # 计算价格变动百分比（用于确定标注颜色）
-    price_change = recent_data['close'].iloc[-1] - recent_data['close'].iloc[0]
-    price_color = '#2CA02C' if price_change >= 0 else '#D62728'  # 上涨绿色，下跌红色
-    
-    # 绘制收盘价折线图 - 使用专业金融蓝色
-    ax.plot(recent_data.index, recent_data['close'], color='#1F77B4', 
-            linewidth=2.5, label='Close Price')
-    
-    # 绘制50日均线 - 使用专业金融橙色
+    # 绘制50日均线
     if 'ma50' in recent_data.columns:
-        ax.plot(recent_data.index, recent_data['ma50'], color='#FF7F0E', 
-                linestyle='--', linewidth=1.8, label='50-Day MA')
+        ax.plot(recent_data.index, recent_data['ma50'], 'r--', linewidth=1.5, label='50-Day MA')
     
-    # 绘制200日均线 - 使用专业金融绿色
+    # 绘制200日均线
     if 'ma200' in recent_data.columns:
-        ax.plot(recent_data.index, recent_data['ma200'], color='#2CA02C', 
-                linestyle='--', linewidth=1.8, label='200-Day MA')
+        ax.plot(recent_data.index, recent_data['ma200'], 'g--', linewidth=1.5, label='200-Day MA')
     
-    # 设置坐标轴颜色和可见性
-    ax.spines['bottom'].set_color('#555555')
-    ax.spines['left'].set_color('#555555')
-    ax.spines['top'].set_visible(False)  # 移除上边框
-    ax.spines['right'].set_visible(False)  # 移除右边框
+    # 设置图表标题和标签
+    ax.set_title(f'Tesla Stock Price - Last {days} Days', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('Price (USD)', fontsize=12)
     
-    # 设置图表标题和标签 - 调整字体颜色和大小
-    ax.set_title(f'Tesla Stock Price - Last {days} Days', 
-                fontsize=14, color='#333333', pad=10)
-    ax.set_xlabel('Date', fontsize=11, color='#333333', labelpad=8)
-    ax.set_ylabel('Price (USD)', fontsize=11, color='#333333', labelpad=8)
-    
-    # 设置刻度颜色和大小
-    ax.tick_params(axis='x', colors='#333333', labelsize=9)
-    ax.tick_params(axis='y', colors='#333333', labelsize=9)
-    
-    # 设置x轴日期格式 - 减少刻度数量以避免拥挤
+    # 设置x轴日期格式
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=7))  # 每7天显示一个日期
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))  # 每5天显示一个日期
     plt.xticks(rotation=45)
     
-    # 添加细网格线 - 减少不透明度提高可读性
-    ax.grid(True, linestyle='--', alpha=0.3, color='#CCCCCC')
+    # 添加网格线
+    ax.grid(True, linestyle='--', alpha=0.7)
     
-    # 将图例移至右上角并美化
-    legend = ax.legend(loc='upper right', fontsize=9, framealpha=0.8)
-    frame = legend.get_frame()
-    frame.set_facecolor('white')
-    frame.set_edgecolor('#CCCCCC')
+    # 添加图例
+    ax.legend(loc='best')
     
-    # 添加最新收盘价标注 - 根据涨跌使用不同颜色
+    # 添加最新收盘价标注
     latest_date = recent_data.index[-1]
     latest_price = recent_data['close'].iloc[-1]
     ax.annotate(f'${latest_price:.2f}', 
                 xy=(latest_date, latest_price),
-                xytext=(8, 0),
+                xytext=(10, 0),
                 textcoords='offset points',
-                fontsize=11,
+                fontsize=12,
                 fontweight='bold',
-                color=price_color,
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=price_color, alpha=0.8))
+                color='blue')
     
-    # 使用紧凑的保存设置，最小化白边
+    # 自动调整布局
+    plt.tight_layout()
+    
+    # 将图表转换为Base64编码的图像
     buffer = io.BytesIO()
-    plt.savefig(buffer, format='png', dpi=120, bbox_inches='tight', pad_inches=0.05)
+    plt.savefig(buffer, format='png', dpi=100)
     buffer.seek(0)
     image_png = buffer.getvalue()
     buffer.close()
@@ -359,7 +333,7 @@ def send_email_report(stock_data, analysis_data):
     <html>
     <head>
         <style>
-            body {{ font-family: Arial, sans-serif; margin: 0; padding: 15px; color: #333; }}
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
             table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
             th, td {{ border: 1px solid #ddd; padding: 10px; text-align: left; }}
             th {{ background-color: #f2f2f2; font-weight: bold; }}
@@ -367,36 +341,27 @@ def send_email_report(stock_data, analysis_data):
                 font-weight: bold; 
                 color: {signal_color}; 
                 font-size: 18px; 
-                padding: 12px 15px;
+                padding: 15px;
                 background-color: #f9f9f9;
-                border-radius: 6px;
+                border-radius: 5px;
                 display: inline-block;
                 margin-top: 15px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             }}
             h3 {{ 
                 color: #333; 
                 border-bottom: 1px solid #ddd; 
                 padding-bottom: 8px;
                 margin-top: 25px;
-                font-size: 16px;
             }}
             .data-section {{ margin-bottom: 25px; }}
-            ul {{ padding-left: 20px; margin: 5px 0; }}
+            ul {{ padding-left: 20px; }}
             li {{ margin-bottom: 5px; }}
             .chart-container {{
-                margin: 15px 0;
-                padding: 0;
+                margin: 20px 0;
+                padding: 10px;
                 background-color: #f9f9f9;
-                border-radius: 6px;
+                border-radius: 5px;
                 text-align: center;
-                overflow: hidden;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            }}
-            .chart-container img {{
-                max-width: 100%;
-                height: auto;
-                display: block;
             }}
         </style>
     </head>
@@ -416,7 +381,7 @@ def send_email_report(stock_data, analysis_data):
             
             <!-- 添加过去30天的股价图表 -->
             <div class="chart-container">
-                <img src="data:image/png;base64,{price_chart_base64}" alt="特斯拉股票过去30天价格走势">
+                <img src="data:image/png;base64,{price_chart_base64}" alt="特斯拉股票过去30天价格走势" style="max-width:100%;">
             </div>
         </div>
         
@@ -532,7 +497,7 @@ def main():
                 
             server.starttls()
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_email, text)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
             server.quit()
             print("错误报告邮件已发送")
         except Exception as email_error:
