@@ -1,0 +1,51 @@
+name: Daily Stock Analysis
+
+on:
+  schedule:
+    # 每个工作日美国东部时间16:30运行(UTC 20:30)
+    - cron: '30 20 * * 1-5'
+  
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      stock_symbols:
+        description: '股票代码(留空分析全部，多个代码用逗号分隔)'
+        required: false
+        default: ''
+
+jobs:
+  analyze_stocks:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy matplotlib pyyaml
+      
+      - name: Run stock analysis
+        env:
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          if [ -n "${{ github.event.inputs.stock_symbols }}" ]; then
+            python stock_tracker.py --symbols ${{ github.event.inputs.stock_symbols }}
+          else
+            python stock_tracker.py
+          fi
+      
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v2
+        with:
+          name: analysis-logs
+          path: stock_tracker_*.log
