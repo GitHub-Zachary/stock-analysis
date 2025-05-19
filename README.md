@@ -16,13 +16,33 @@
 - 发送包含完整分析的HTML格式邮件报告
 - 通过GitHub Actions自动化运行
 
+## 项目结构
+
+```
+stock_analysis/
+├── stock_analysis/           # 主模块
+│   ├── __init__.py           # 包初始化
+│   ├── data.py               # 数据获取和处理
+│   ├── indicators.py         # 技术指标计算
+│   ├── strategies.py         # 买入策略
+│   ├── visualization.py      # 图表生成
+│   ├── reporting.py          # 邮件报告
+│   └── utils.py              # 工具函数
+├── scripts/
+│   └── run_analysis.py       # 主运行脚本
+├── config.yaml               # 配置文件
+└── .github/
+    └── workflows/
+        └── stock-analysis.yml  # GitHub Actions工作流
+```
+
 ## 配置说明
 
 系统通过`config.yaml`文件进行配置：
 
 ```yaml
 # Alpha Vantage API配置
-api_key: ""  # 留空使用环境变量
+api_key: ""  # 留空使用环境变量 ALPHA_VANTAGE_API_KEY
 
 # 股票配置
 symbols:
@@ -42,20 +62,51 @@ strategy:
   price_position_threshold: 33   # 价格位置阈值(%)
   ma_proximity_threshold: 0.05   # 均线附近阈值(5%)
   anomaly_threshold: 0.15        # 异常价格变动阈值(15%)
+```
 
-## 项目结构
-stock_analysis/
-├── stock_analysis/           # 主模块
-│   ├── __init__.py
-│   ├── data.py               # 数据获取相关
-│   ├── indicators.py         # 技术指标计算
-│   ├── strategies.py         # 买入策略
-│   ├── visualization.py      # 图表生成
-│   ├── reporting.py          # 邮件报告
-│   └── utils.py              # 工具函数
-├── scripts/
-│   └── run_analysis.py       # 主运行脚本
-├── config.yaml               # 配置文件
-└── .github/
-    └── workflows/
-        └── stock-analysis.yml  # GitHub Actions工作流
+## 使用方法
+
+### 本地运行
+
+1. 安装依赖：
+   ```
+   pip install requests pandas numpy matplotlib pyyaml
+   ```
+
+2. 设置环境变量：
+   ```
+   export ALPHA_VANTAGE_API_KEY="您的API密钥"
+   export EMAIL_FROM="发件人邮箱"
+   export EMAIL_PASSWORD="邮箱密码"
+   export EMAIL_TO="收件人邮箱"
+   ```
+
+3. 运行脚本：
+   ```
+   python scripts/run_analysis.py
+   ```
+
+### 命令行参数
+
+- `--config`：指定配置文件路径（默认为`config.yaml`）
+- `--symbol`：分析单一股票（例如：`--symbol TSLA`）
+- `--symbols`：分析多只股票（例如：`--symbols TSLA,AAPL,NVDA`）
+- `--no-email`：仅进行分析，不发送邮件
+- `--cache-expiry`：设置缓存过期时间（小时）
+
+### GitHub Actions自动化
+
+该项目配置了GitHub Actions工作流，可以：
+- 每个工作日美国东部时间16:30自动运行
+- 通过手动触发工作流并指定股票代码运行
+
+## 环境要求
+
+- Python 3.6+
+- 依赖库：requests, pandas, numpy, matplotlib, pyyaml
+
+## 注意事项
+
+- Alpha Vantage API有使用频率限制，建议不要过于频繁地运行脚本
+- 邮件发送需要正确配置邮箱服务器信息
+- Gmail用户需要使用应用密码而不是账户密码
