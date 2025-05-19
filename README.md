@@ -42,3 +42,20 @@ strategy:
   price_position_threshold: 33   # 价格位置阈值(%)
   ma_proximity_threshold: 0.05   # 均线附近阈值(5%)
   anomaly_threshold: 0.15        # 异常价格变动阈值(15%)
+
+###项目结构
+stock_analysis/
+├── stock_analysis/           # 主模块
+│   ├── __init__.py
+│   ├── data.py               # 数据获取相关
+│   ├── indicators.py         # 技术指标计算
+│   ├── strategies.py         # 买入策略
+│   ├── visualization.py      # 图表生成
+│   ├── reporting.py          # 邮件报告
+│   └── utils.py              # 工具函数
+├── scripts/
+│   └── run_analysis.py       # 主运行脚本
+├── config.yaml               # 配置文件
+└── .github/
+    └── workflows/
+        └── stock-analysis.yml  # GitHub Actions工作流
