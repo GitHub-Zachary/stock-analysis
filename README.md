@@ -43,7 +43,7 @@ strategy:
   ma_proximity_threshold: 0.05   # 均线附近阈值(5%)
   anomaly_threshold: 0.15        # 异常价格变动阈值(15%)
 
-###项目结构
+## 项目结构
 stock_analysis/
 ├── stock_analysis/           # 主模块
 │   ├── __init__.py
