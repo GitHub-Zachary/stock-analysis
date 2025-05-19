@@ -38,7 +38,7 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           if [ -n "${{ github.event.inputs.stock_symbols }}" ]; then
-            python stock_tracker.py --symbols ${{ github.event.inputs.stock_symbols }}
+            python scripts/run_analysis.py --symbols ${{ github.event.inputs.stock_symbols }}
           else
-            python stock_tracker.py
+            python scripts/run_analysis.py
           fi
