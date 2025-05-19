@@ -66,26 +66,6 @@ strategy:
 
 ## 使用方法
 
-### 本地运行
-
-1. 安装依赖：
-   ```
-   pip install requests pandas numpy matplotlib pyyaml
-   ```
-
-2. 设置环境变量：
-   ```
-   export ALPHA_VANTAGE_API_KEY="您的API密钥"
-   export EMAIL_FROM="发件人邮箱"
-   export EMAIL_PASSWORD="邮箱密码"
-   export EMAIL_TO="收件人邮箱"
-   ```
-
-3. 运行脚本：
-   ```
-   python scripts/run_analysis.py
-   ```
-
 ### 命令行参数
 
 - `--config`：指定配置文件路径（默认为`config.yaml`）
