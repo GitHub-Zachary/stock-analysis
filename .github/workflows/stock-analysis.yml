@@ -42,10 +42,3 @@ jobs:
           else
             python stock_tracker.py
           fi
-      
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: analysis-logs
-          path: stock_tracker_*.log
