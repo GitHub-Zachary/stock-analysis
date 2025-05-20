@@ -48,12 +48,14 @@ api_key: ""  # 留空使用环境变量 ALPHA_VANTAGE_API_KEY
 symbols:
   - TSLA
   - AAPL
+  - MSFT
   - NVDA
 
 # 股票中文名称映射
 symbol_names:
   TSLA: "特斯拉"
   AAPL: "苹果"
+  MSFT: "微软"
   NVDA: "英伟达"
 
 # 策略参数
