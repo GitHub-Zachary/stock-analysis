@@ -1,12 +1,12 @@
 # Alpha Vantage API配置
 api_key: ""  # 留空使用环境变量 ALPHA_VANTAGE_API_KEY
 
-# 股票配置（按照特斯拉、苹果、微软、英伟达的顺序排列）
+# 股票配置（按照苹果、英伟达、微软、特斯拉的顺序排列）
 symbols:
-  - TSLA
   - AAPL
-  - MSFT
   - NVDA
+  - MSFT
+  - TSLA
 
 # 股票中文名称映射
 symbol_names:
